@@ -8,7 +8,9 @@ export function getServer()   { return _server; }
 export function getRoomPath() { return _roomPath; }
 export function getSessionKey() {
     if (!_server) return null;
-    return _roomPath ? `${_server}${_roomPath}` : _server;
+    // Strip trailing reconnection counter e.g. /69FF42EB/2 -> /69FF42EB
+    const path = _roomPath ? _roomPath.replace(/\/\d+$/, '') : null;
+    return path ? `${_server}${path}` : _server;
 }
 
 export function initSession() {

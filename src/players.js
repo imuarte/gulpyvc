@@ -65,9 +65,6 @@ export function initPlayers() {
         if (isPlayerObj(value)) {
             trackMap(this);
             const p = normalize(value);
-            if (!_players.has(p.id)) {
-                console.log('[GulpyVC] player joined:', p.id, p.nick);
-            }
             _players.set(p.id, p);
         }
         return origSet.call(this, key, value);
@@ -76,11 +73,7 @@ export function initPlayers() {
     // Map.prototype.delete - clean up departed players
     const origDelete = win.Map.prototype.delete;
     win.Map.prototype.delete = function (key) {
-        if (_knownMaps.has(this) && _players.has(key)) {
-            const p = _players.get(key);
-            console.log('[GulpyVC] player left:', p.id, p.nick);
-            _players.delete(key);
-        }
+        if (_knownMaps.has(this)) _players.delete(key);
         return origDelete.call(this, key);
     };
 }

@@ -243,7 +243,8 @@
   function getSessionKey() {
     if (!_server)
       return null;
-    return _roomPath ? `${_server}${_roomPath}` : _server;
+    const path = _roomPath ? _roomPath.replace(/\/\d+$/, "") : null;
+    return path ? `${_server}${path}` : _server;
   }
   function initSession() {
     const OrigWS = win.WebSocket;
@@ -326,20 +327,14 @@
       if (isPlayerObj(value)) {
         trackMap(this);
         const p = normalize(value);
-        if (!_players.has(p.id)) {
-          console.log("[GulpyVC] player joined:", p.id, p.nick);
-        }
         _players.set(p.id, p);
       }
       return origSet.call(this, key, value);
     };
     const origDelete = win2.Map.prototype.delete;
     win2.Map.prototype.delete = function(key) {
-      if (_knownMaps.has(this) && _players.has(key)) {
-        const p = _players.get(key);
-        console.log("[GulpyVC] player left:", p.id, p.nick);
+      if (_knownMaps.has(this))
         _players.delete(key);
-      }
       return origDelete.call(this, key);
     };
   }
@@ -375,6 +370,188 @@
     }
   });
 
+  // src/mic.js
+  async function requestMic() {
+    if (_stream)
+      return _stream;
+    _stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    _track = _stream.getAudioTracks()[0];
+    _track.enabled = false;
+    console.log("[GulpyVC] mic ready");
+    return _stream;
+  }
+  function setMicActive(active) {
+    if (_track)
+      _track.enabled = active;
+  }
+  function getMicStream() {
+    return _stream;
+  }
+  var _stream, _track;
+  var init_mic = __esm({
+    "src/mic.js"() {
+      _stream = null;
+      _track = null;
+    }
+  });
+
+  // src/signaling.js
+  function onSignal(type, fn) {
+    _handlers[type] = fn;
+  }
+  function dispatch(msg) {
+    const fn = _handlers[msg.type];
+    if (fn)
+      fn(msg);
+  }
+  function connectSignaling(sessionKey, peerId, nick) {
+    if (_ws2 && _ws2.readyState <= 1)
+      return;
+    _sessionKey = sessionKey;
+    _peerId = String(peerId);
+    _nick = nick;
+    _ws2 = new WebSocket(SIGNAL_URL);
+    _ws2.onopen = () => {
+      _ws2.send(JSON.stringify({ type: "join", session: _sessionKey, peerId: _peerId, nick: _nick }));
+      console.log("[GulpyVC] signaling connected");
+    };
+    _ws2.onmessage = (e) => {
+      try {
+        dispatch(JSON.parse(e.data));
+      } catch {
+      }
+    };
+    _ws2.onclose = () => {
+      console.log("[GulpyVC] signaling disconnected");
+      _ws2 = null;
+      setTimeout(() => connectSignaling(_sessionKey, _peerId, _nick), 3e3);
+    };
+  }
+  function sendSignal(msg) {
+    if (_ws2 && _ws2.readyState === 1)
+      _ws2.send(JSON.stringify(msg));
+  }
+  var SIGNAL_URL, _ws2, _sessionKey, _peerId, _nick, _handlers;
+  var init_signaling = __esm({
+    "src/signaling.js"() {
+      SIGNAL_URL = "wss://gulpyvc-signal.fly.dev";
+      _ws2 = null;
+      _sessionKey = null;
+      _peerId = null;
+      _nick = null;
+      _handlers = {};
+    }
+  });
+
+  // src/webrtc.js
+  function createPeer(remoteId, polite) {
+    if (_peers.has(remoteId))
+      return _peers.get(remoteId);
+    const pc = new RTCPeerConnection(STUN);
+    _peers.set(remoteId, pc);
+    const stream = getMicStream();
+    if (stream)
+      stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+    pc.ontrack = ({ streams }) => {
+      const audio = document.createElement("audio");
+      audio.autoplay = true;
+      audio.srcObject = streams[0];
+      document.body.appendChild(audio);
+    };
+    pc.onicecandidate = ({ candidate }) => {
+      if (candidate)
+        sendSignal({ type: "ice", to: remoteId, candidate });
+    };
+    pc.onnegotiationneeded = async () => {
+      try {
+        await pc.setLocalDescription();
+        sendSignal({ type: "offer", to: remoteId, sdp: pc.localDescription });
+      } catch (e) {
+        console.error("[GulpyVC] offer error", e);
+      }
+    };
+    pc.onsignalingstatechange = () => {
+    };
+    pc._polite = polite;
+    pc._makingOffer = false;
+    return pc;
+  }
+  function removePeer(id) {
+    const pc = _peers.get(id);
+    if (pc) {
+      pc.close();
+      _peers.delete(id);
+    }
+  }
+  function initWebRTC() {
+    onSignal("peers", ({ peers }) => {
+      for (const p of peers) {
+        console.log("[GulpyVC] existing peer:", p.id, p.nick);
+        createPeer(p.id, true);
+      }
+    });
+    onSignal("peer-joined", ({ id, nick }) => {
+      console.log("[GulpyVC] peer joined VC:", id, nick);
+      createPeer(id, false);
+    });
+    onSignal("peer-left", ({ id }) => {
+      console.log("[GulpyVC] peer left VC:", id);
+      removePeer(id);
+    });
+    onSignal("offer", async ({ from, sdp }) => {
+      const pc = createPeer(from, true);
+      const offerCollision = sdp.type === "offer" && (pc._makingOffer || pc.signalingState !== "stable");
+      if (offerCollision && !pc._polite)
+        return;
+      try {
+        await pc.setRemoteDescription(sdp);
+        if (sdp.type === "offer") {
+          await pc.setLocalDescription();
+          sendSignal({ type: "answer", to: from, sdp: pc.localDescription });
+        }
+      } catch (e) {
+        console.error("[GulpyVC] offer handling error", e);
+      }
+    });
+    onSignal("answer", async ({ from, sdp }) => {
+      const pc = _peers.get(from);
+      if (!pc)
+        return;
+      try {
+        await pc.setRemoteDescription(sdp);
+      } catch {
+      }
+    });
+    onSignal("ice", async ({ from, candidate }) => {
+      const pc = _peers.get(from);
+      if (!pc)
+        return;
+      try {
+        await pc.addIceCandidate(candidate);
+      } catch {
+      }
+    });
+  }
+  function addMicToPeers() {
+    const stream = getMicStream();
+    if (!stream)
+      return;
+    for (const pc of _peers.values()) {
+      if (pc.getSenders().length === 0) {
+        stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+      }
+    }
+  }
+  var STUN, _peers;
+  var init_webrtc = __esm({
+    "src/webrtc.js"() {
+      init_mic();
+      init_signaling();
+      STUN = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+      _peers = /* @__PURE__ */ new Map();
+    }
+  });
+
   // src/index.js
   var require_src = __commonJS({
     "src/index.js"() {
@@ -382,7 +559,38 @@
       init_keys();
       init_session();
       init_players();
+      init_mic();
+      init_signaling();
+      init_webrtc();
       var win3 = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+      var _micReady = false;
+      var _localId = null;
+      var _localNick = null;
+      var _connected = false;
+      async function onMicChange(active) {
+        if (active && !_micReady) {
+          try {
+            await requestMic();
+            _micReady = true;
+            addMicToPeers();
+          } catch (e) {
+            console.warn("[GulpyVC] mic permission denied:", e.message);
+            setKeyState("mic", false);
+            return;
+          }
+        }
+        setMicActive(active);
+        setKeyState("mic", active);
+        if (active && !_connected && getSessionKey()) {
+          _connected = true;
+          const me = getSessionPlayers().find((p) => p.id === _localId) || getSessionPlayers()[0];
+          _localNick = me?.nick || "Player";
+          connectSignaling(getSessionKey(), _localId || "unknown", _localNick);
+        }
+      }
+      function onAudioChange(active) {
+        setKeyState("audio", active);
+      }
       (function() {
         "use strict";
         initSession();
@@ -390,14 +598,12 @@
         win3._gulpyvc = { debug: debugPlayers, session: getSessionKey };
         function start() {
           try {
+            initWebRTC();
             initGUI();
-            initKeys(
-              (active) => setKeyState("mic", active),
-              (active) => setKeyState("audio", active)
-            );
-            console.log("[GulpyVC] ready | session:", getSessionKey() ?? "(not connected yet)");
+            initKeys(onMicChange, onAudioChange);
+            console.log("[GulpyVC] ready | session:", getSessionKey() ?? "(not yet connected)");
           } catch (e) {
-            console.error("[GulpyVC] Init error:", e);
+            console.error("[GulpyVC] init error:", e);
           }
         }
         if (document.readyState === "loading") {

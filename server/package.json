@@ -1,0 +1,9 @@
+{
+  "name": "gulpyvc-server",
+  "version": "0.1.0",
+  "main": "index.js",
+  "type": "commonjs",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
