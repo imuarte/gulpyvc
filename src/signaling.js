@@ -16,7 +16,13 @@ function dispatch(msg) {
 }
 
 export function connectSignaling(sessionKey, peerId, nick) {
-    if (_ws && _ws.readyState <= 1) return; // already open/connecting
+    // If already connected to same session, just update nick via re-join
+    if (_ws && _ws.readyState === 1 && _sessionKey === sessionKey) {
+        _nick = nick;
+        _ws.send(JSON.stringify({ type: 'join', session: _sessionKey, peerId: _peerId, nick }));
+        return;
+    }
+    if (_ws && _ws.readyState <= 1) _ws.close();
 
     _sessionKey = sessionKey;
     _peerId     = String(peerId);

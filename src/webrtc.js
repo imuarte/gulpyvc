@@ -127,6 +127,11 @@ export function initWebRTC() {
 
     onSignal('peer-left', ({ id }) => removePeer(id));
 
+    onSignal('peer-nick', ({ id, nick }) => {
+        const info = _info.get(id);
+        if (info) { info.nick = nick; _onChange?.(); }
+    });
+
     onSignal('offer', async ({ from, sdp }) => {
         const pc = createPeer(from, true);
         const offerCollision = sdp.type === 'offer' && (pc._makingOffer || pc.signalingState !== 'stable');

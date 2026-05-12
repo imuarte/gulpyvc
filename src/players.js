@@ -1,4 +1,3 @@
-// Obfuscated property keys from gulper.io
 const K_ID    = '$c1';
 const K_NICK  = '$c7';
 const K_SCORE = '$cs';
@@ -9,12 +8,12 @@ const win = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
 const PLAYER_MAP_SLOT = Symbol('gulpyvcPlayerMap');
 const MANAGER_SLOT    = Symbol('gulpyvcManager');
+const BP_SLOT         = Symbol('gulpyvcBP');
 
-let _activeMap = null;
+let _activeMap   = null;
+let _onLocalNick = null; // callback(nick) when local player is assigned
 const _knownMaps = new Set();
-
-// Players present in the session: id -> { id, nick, score }
-const _players = new Map();
+const _players   = new Map();
 
 function isPlayerObj(value) {
     if (!value || typeof value !== 'object') return false;
@@ -50,8 +49,10 @@ function trackMap(map) {
     _activeMap = map;
 }
 
+// Called when local nick is resolved - callback receives nick string
+export function onLocalNick(fn) { _onLocalNick = fn; }
+
 export function initPlayers() {
-    // Hook game internals to find the player map fast
     hookObjectProperty('$bo', PLAYER_MAP_SLOT, (owner, value) => {
         if (value instanceof Map) trackMap(value);
     });
@@ -59,18 +60,24 @@ export function initPlayers() {
         if (value?.$bo instanceof Map) trackMap(value.$bo);
     });
 
-    // Map.prototype.set - detect player additions
+    // $bp is the local player object - fires exactly when server assigns us our slot
+    hookObjectProperty('$bp', BP_SLOT, (owner, value) => {
+        const nick = value?.[K_NICK]?.trim();
+        if (nick) {
+            console.log('[GulpyVC] local nick detected:', nick);
+            _onLocalNick?.(nick);
+        }
+    });
+
     const origSet = win.Map.prototype.set;
     win.Map.prototype.set = function (key, value) {
         if (isPlayerObj(value)) {
             trackMap(this);
-            const p = normalize(value);
-            _players.set(p.id, p);
+            _players.set(normalize(value).id, normalize(value));
         }
         return origSet.call(this, key, value);
     };
 
-    // Map.prototype.delete - clean up departed players
     const origDelete = win.Map.prototype.delete;
     win.Map.prototype.delete = function (key) {
         if (_knownMaps.has(this)) _players.delete(key);
@@ -85,15 +92,23 @@ export function getSessionPlayers() {
 export function getLocalNick() {
     const w = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
-    // 1. Direct from live game object - most reliable once game is running
-    const liveNick = w._ghGame?.$me?.$bp?.$c7;
-    if (liveNick?.trim()) return liveNick.trim();
+    // 1. Live game object - set once server assigns us a player
+    const liveNick = w._ghGame?.$me?.$bp?.[K_NICK]?.trim();
+    if (liveNick) return liveNick;
 
-    // 2. Nick input field (available while on start screen)
+    // 2. Match by game.$c1 (local player ID) against player map
+    const localId = w._ghGame?.$c1;
+    if (localId != null && _activeMap) {
+        for (const [, p] of _activeMap) {
+            if (p[K_ID] === localId && p[K_NICK]?.trim()) return p[K_NICK].trim();
+        }
+    }
+
+    // 3. Nick input field
     const input = document.querySelector('#nick-input');
     if (input?.value?.trim()) return input.value.trim();
 
-    // 3. localStorage last_nick - gulper.io saves as btoa(unescape(encodeURIComponent(nick)))
+    // 4. localStorage - gulper.io stores as btoa(unescape(encodeURIComponent(nick)))
     try {
         const encoded = w.localStorage?.getItem('last_nick');
         if (encoded) {
@@ -107,13 +122,8 @@ export function getLocalNick() {
 
 export function debugPlayers() {
     const players = getSessionPlayers();
-    if (!players.length) {
-        console.log('[GulpyVC] no players detected yet');
-        return;
-    }
-    console.group(`[GulpyVC] ${players.length} player(s) in session:`);
-    for (const p of players) {
-        console.log(`  id=${p.id}  nick="${p.nick}"  score=${p.score}  alive=${p.alive}`);
-    }
+    if (!players.length) { console.log('[GulpyVC] no players detected yet'); return; }
+    console.group(`[GulpyVC] ${players.length} player(s):`);
+    for (const p of players) console.log(`  id=${p.id}  nick="${p.nick}"  score=${p.score}`);
     console.groupEnd();
 }

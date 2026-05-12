@@ -320,6 +320,9 @@
     _knownMaps.add(map);
     _activeMap = map;
   }
+  function onLocalNick(fn) {
+    _onLocalNick = fn;
+  }
   function initPlayers() {
     hookObjectProperty("$bo", PLAYER_MAP_SLOT, (owner, value) => {
       if (value instanceof Map)
@@ -329,12 +332,18 @@
       if (value?.$bo instanceof Map)
         trackMap(value.$bo);
     });
+    hookObjectProperty("$bp", BP_SLOT, (owner, value) => {
+      const nick = value?.[K_NICK]?.trim();
+      if (nick) {
+        console.log("[GulpyVC] local nick detected:", nick);
+        _onLocalNick?.(nick);
+      }
+    });
     const origSet = win2.Map.prototype.set;
     win2.Map.prototype.set = function(key, value) {
       if (isPlayerObj(value)) {
         trackMap(this);
-        const p = normalize(value);
-        _players.set(p.id, p);
+        _players.set(normalize(value).id, normalize(value));
       }
       return origSet.call(this, key, value);
     };
@@ -350,9 +359,16 @@
   }
   function getLocalNick() {
     const w = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
-    const liveNick = w._ghGame?.$me?.$bp?.$c7;
-    if (liveNick?.trim())
-      return liveNick.trim();
+    const liveNick = w._ghGame?.$me?.$bp?.[K_NICK]?.trim();
+    if (liveNick)
+      return liveNick;
+    const localId = w._ghGame?.$c1;
+    if (localId != null && _activeMap) {
+      for (const [, p] of _activeMap) {
+        if (p[K_ID] === localId && p[K_NICK]?.trim())
+          return p[K_NICK].trim();
+      }
+    }
     const input = document.querySelector("#nick-input");
     if (input?.value?.trim())
       return input.value.trim();
@@ -373,13 +389,12 @@
       console.log("[GulpyVC] no players detected yet");
       return;
     }
-    console.group(`[GulpyVC] ${players.length} player(s) in session:`);
-    for (const p of players) {
-      console.log(`  id=${p.id}  nick="${p.nick}"  score=${p.score}  alive=${p.alive}`);
-    }
+    console.group(`[GulpyVC] ${players.length} player(s):`);
+    for (const p of players)
+      console.log(`  id=${p.id}  nick="${p.nick}"  score=${p.score}`);
     console.groupEnd();
   }
-  var K_ID, K_NICK, K_SCORE, K_DEAD, K_SPAWN, win2, PLAYER_MAP_SLOT, MANAGER_SLOT, _activeMap, _knownMaps, _players;
+  var K_ID, K_NICK, K_SCORE, K_DEAD, K_SPAWN, win2, PLAYER_MAP_SLOT, MANAGER_SLOT, BP_SLOT, _activeMap, _onLocalNick, _knownMaps, _players;
   var init_players = __esm({
     "src/players.js"() {
       K_ID = "$c1";
@@ -390,7 +405,9 @@
       win2 = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
       PLAYER_MAP_SLOT = Symbol("gulpyvcPlayerMap");
       MANAGER_SLOT = Symbol("gulpyvcManager");
+      BP_SLOT = Symbol("gulpyvcBP");
       _activeMap = null;
+      _onLocalNick = null;
       _knownMaps = /* @__PURE__ */ new Set();
       _players = /* @__PURE__ */ new Map();
     }
@@ -431,8 +448,13 @@
       fn(msg);
   }
   function connectSignaling(sessionKey, peerId, nick) {
-    if (_ws && _ws.readyState <= 1)
+    if (_ws && _ws.readyState === 1 && _sessionKey === sessionKey) {
+      _nick = nick;
+      _ws.send(JSON.stringify({ type: "join", session: _sessionKey, peerId: _peerId, nick }));
       return;
+    }
+    if (_ws && _ws.readyState <= 1)
+      _ws.close();
     _sessionKey = sessionKey;
     _peerId = String(peerId);
     _nick = nick;
@@ -577,6 +599,13 @@
       createPeer(id, false, nick);
     });
     onSignal("peer-left", ({ id }) => removePeer(id));
+    onSignal("peer-nick", ({ id, nick }) => {
+      const info = _info.get(id);
+      if (info) {
+        info.nick = nick;
+        _onChange?.();
+      }
+    });
     onSignal("offer", async ({ from, sdp }) => {
       const pc = createPeer(from, true);
       const offerCollision = sdp.type === "offer" && (pc._makingOffer || pc.signalingState !== "stable");
@@ -833,13 +862,17 @@
         initSession();
         initPlayers();
         win3._gulpyvc = { debug: debugPlayers, session: getSessionKey };
+        onLocalNick((nick) => {
+          setLocalPeer(nick);
+          const key = getSessionKey();
+          if (key)
+            connectSignaling(key, SIGNAL_ID, nick);
+        });
         onSessionReady((sessionKey) => {
-          setTimeout(() => {
-            const nick = resolveNick();
-            setLocalPeer(nick);
-            connectSignaling(sessionKey, SIGNAL_ID, nick);
-            console.log("[GulpyVC] joining session:", sessionKey, "as", nick);
-          }, 500);
+          const nick = resolveNick();
+          setLocalPeer(nick);
+          connectSignaling(sessionKey, SIGNAL_ID, nick);
+          console.log("[GulpyVC] joining session:", sessionKey, "as", nick);
         });
         function start() {
           try {

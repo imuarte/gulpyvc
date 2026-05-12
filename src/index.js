@@ -1,7 +1,7 @@
 import { initGUI, setKeyState, setCallback } from './gui.js';
 import { initKeys } from './keys.js';
 import { initSession, onSessionReady, getSessionKey } from './session.js';
-import { initPlayers, getSessionPlayers, debugPlayers, getLocalNick } from './players.js';
+import { initPlayers, getSessionPlayers, debugPlayers, getLocalNick, onLocalNick } from './players.js';
 import { requestMic, setMicActive } from './mic.js';
 import { connectSignaling, sendSignal } from './signaling.js';
 import { initWebRTC, addMicToPeers, setLocalPeer, startLocalAnalyser, setAudioEnabled } from './webrtc.js';
@@ -58,15 +58,20 @@ function resolveNick() {
 
     win._gulpyvc = { debug: debugPlayers, session: getSessionKey };
 
+    // $bp hook fires the moment server assigns us our player - update nick everywhere
+    onLocalNick(nick => {
+        setLocalPeer(nick);
+        // Also tell signaling server our real nick (re-join with correct name)
+        const key = getSessionKey();
+        if (key) connectSignaling(key, SIGNAL_ID, nick);
+    });
+
     // Auto-connect to signaling when game session is detected
     onSessionReady(sessionKey => {
-        // _ghGame.$me.$bp is set slightly after WebSocket connect - give it a tick
-        setTimeout(() => {
-            const nick = resolveNick();
-            setLocalPeer(nick);
-            connectSignaling(sessionKey, SIGNAL_ID, nick);
-            console.log('[GulpyVC] joining session:', sessionKey, 'as', nick);
-        }, 500);
+        const nick = resolveNick();
+        setLocalPeer(nick);
+        connectSignaling(sessionKey, SIGNAL_ID, nick);
+        console.log('[GulpyVC] joining session:', sessionKey, 'as', nick);
     });
 
     function start() {

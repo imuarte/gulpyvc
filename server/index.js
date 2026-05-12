@@ -36,19 +36,25 @@ wss.on('connection', ws => {
         try { msg = JSON.parse(raw); } catch { return; }
 
         if (msg.type === 'join') {
+            const newNick = msg.nick || '?';
+            // Re-join: nick update only, no new peer notification
+            if (session && peerId && session.has(peerId)) {
+                session.get(peerId).nick = newNick;
+                broadcast(session, { type: 'peer-nick', id: peerId, nick: newNick }, peerId);
+                console.log(`[~] ${peerId} nick updated to "${newNick}"`);
+                return;
+            }
+
             sessionKey = msg.session;
             peerId     = String(msg.peerId);
             session    = getOrCreateSession(sessionKey);
 
             const existing = Array.from(session.entries()).map(([id, p]) => ({ id, nick: p.nick }));
-            session.set(peerId, { ws, nick: msg.nick || '?' });
+            session.set(peerId, { ws, nick: newNick });
 
-            // Send existing peers to the newcomer
             ws.send(JSON.stringify({ type: 'peers', peers: existing }));
-
-            // Notify existing peers
-            broadcast(session, { type: 'peer-joined', id: peerId, nick: msg.nick || '?' }, peerId);
-            console.log(`[+] ${peerId} "${msg.nick}" joined ${sessionKey} (${session.size} in session)`);
+            broadcast(session, { type: 'peer-joined', id: peerId, nick: newNick }, peerId);
+            console.log(`[+] ${peerId} "${newNick}" joined ${sessionKey} (${session.size} in session)`);
             return;
         }
 
