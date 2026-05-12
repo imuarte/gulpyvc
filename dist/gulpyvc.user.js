@@ -239,13 +239,155 @@
     }
   });
 
+  // src/session.js
+  function getSessionKey() {
+    if (!_server)
+      return null;
+    return _roomPath ? `${_server}${_roomPath}` : _server;
+  }
+  function initSession() {
+    const OrigWS = win.WebSocket;
+    function HookedWS(url, protocols) {
+      const ws = protocols ? new OrigWS(url, protocols) : new OrigWS(url);
+      try {
+        const u = new URL(url);
+        _server = u.host;
+        _roomPath = u.pathname !== "/" ? u.pathname : u.searchParams.get("room") || null;
+        _ws = ws;
+        console.log("[GulpyVC] session:", getSessionKey());
+      } catch {
+      }
+      return ws;
+    }
+    Object.setPrototypeOf(HookedWS, OrigWS);
+    HookedWS.prototype = OrigWS.prototype;
+    win.WebSocket = HookedWS;
+  }
+  var win, _server, _roomPath, _ws;
+  var init_session = __esm({
+    "src/session.js"() {
+      win = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+      _server = null;
+      _roomPath = null;
+      _ws = null;
+    }
+  });
+
+  // src/players.js
+  function isPlayerObj(value) {
+    if (!value || typeof value !== "object")
+      return false;
+    return value[K_ID] != null && typeof value[K_NICK] === "string" && value[K_NICK].trim();
+  }
+  function normalize(value) {
+    return {
+      id: value[K_ID],
+      nick: value[K_NICK]?.trim() || "?",
+      score: value[K_SCORE] ?? 0,
+      alive: value[K_DEAD] === 0 && value[K_SPAWN] !== Number.MAX_VALUE
+    };
+  }
+  function hookObjectProperty(propName, slotSym, onSet) {
+    const desc = Object.getOwnPropertyDescriptor(Object.prototype, propName);
+    if (desc && !desc.configurable)
+      return;
+    Object.defineProperty(Object.prototype, propName, {
+      configurable: true,
+      enumerable: false,
+      get() {
+        return this[slotSym];
+      },
+      set(v) {
+        this[slotSym] = v;
+        try {
+          onSet(this, v);
+        } catch {
+        }
+      }
+    });
+  }
+  function trackMap(map) {
+    if (!(map instanceof Map) || _knownMaps.has(map))
+      return;
+    _knownMaps.add(map);
+    _activeMap = map;
+  }
+  function initPlayers() {
+    hookObjectProperty("$bo", PLAYER_MAP_SLOT, (owner, value) => {
+      if (value instanceof Map)
+        trackMap(value);
+    });
+    hookObjectProperty("$me", MANAGER_SLOT, (owner, value) => {
+      if (value?.$bo instanceof Map)
+        trackMap(value.$bo);
+    });
+    const origSet = win2.Map.prototype.set;
+    win2.Map.prototype.set = function(key, value) {
+      if (isPlayerObj(value)) {
+        trackMap(this);
+        const p = normalize(value);
+        if (!_players.has(p.id)) {
+          console.log("[GulpyVC] player joined:", p.id, p.nick);
+        }
+        _players.set(p.id, p);
+      }
+      return origSet.call(this, key, value);
+    };
+    const origDelete = win2.Map.prototype.delete;
+    win2.Map.prototype.delete = function(key) {
+      if (_knownMaps.has(this) && _players.has(key)) {
+        const p = _players.get(key);
+        console.log("[GulpyVC] player left:", p.id, p.nick);
+        _players.delete(key);
+      }
+      return origDelete.call(this, key);
+    };
+  }
+  function getSessionPlayers() {
+    return Array.from(_players.values());
+  }
+  function debugPlayers() {
+    const players = getSessionPlayers();
+    if (!players.length) {
+      console.log("[GulpyVC] no players detected yet");
+      return;
+    }
+    console.group(`[GulpyVC] ${players.length} player(s) in session:`);
+    for (const p of players) {
+      console.log(`  id=${p.id}  nick="${p.nick}"  score=${p.score}  alive=${p.alive}`);
+    }
+    console.groupEnd();
+  }
+  var K_ID, K_NICK, K_SCORE, K_DEAD, K_SPAWN, win2, PLAYER_MAP_SLOT, MANAGER_SLOT, _activeMap, _knownMaps, _players;
+  var init_players = __esm({
+    "src/players.js"() {
+      K_ID = "$c1";
+      K_NICK = "$c7";
+      K_SCORE = "$cs";
+      K_DEAD = "$cg";
+      K_SPAWN = "$c3";
+      win2 = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+      PLAYER_MAP_SLOT = Symbol("gulpyvcPlayerMap");
+      MANAGER_SLOT = Symbol("gulpyvcManager");
+      _activeMap = null;
+      _knownMaps = /* @__PURE__ */ new Set();
+      _players = /* @__PURE__ */ new Map();
+    }
+  });
+
   // src/index.js
   var require_src = __commonJS({
     "src/index.js"() {
       init_gui();
       init_keys();
+      init_session();
+      init_players();
+      var win3 = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
       (function() {
         "use strict";
+        initSession();
+        initPlayers();
+        win3._gulpyvc = { debug: debugPlayers, session: getSessionKey };
         function start() {
           try {
             initGUI();
@@ -253,6 +395,7 @@
               (active) => setKeyState("mic", active),
               (active) => setKeyState("audio", active)
             );
+            console.log("[GulpyVC] ready | session:", getSessionKey() ?? "(not connected yet)");
           } catch (e) {
             console.error("[GulpyVC] Init error:", e);
           }
