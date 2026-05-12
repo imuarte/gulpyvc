@@ -60,10 +60,13 @@ function resolveNick() {
 
     // Auto-connect to signaling when game session is detected
     onSessionReady(sessionKey => {
-        const nick = resolveNick();
-        setLocalPeer(nick);
-        connectSignaling(sessionKey, SIGNAL_ID, nick);
-        console.log('[GulpyVC] joining session:', sessionKey, 'as', nick);
+        // _ghGame.$me.$bp is set slightly after WebSocket connect - give it a tick
+        setTimeout(() => {
+            const nick = resolveNick();
+            setLocalPeer(nick);
+            connectSignaling(sessionKey, SIGNAL_ID, nick);
+            console.log('[GulpyVC] joining session:', sessionKey, 'as', nick);
+        }, 500);
     });
 
     function start() {

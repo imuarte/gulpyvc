@@ -349,16 +349,21 @@
     return Array.from(_players.values());
   }
   function getLocalNick() {
+    const w = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    const liveNick = w._ghGame?.$me?.$bp?.$c7;
+    if (liveNick?.trim())
+      return liveNick.trim();
     const input = document.querySelector("#nick-input");
     if (input?.value?.trim())
       return input.value.trim();
-    const w = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
-    const localEntity = w._ghGame?.$me?.$bp ?? w._ghGame?.$bp ?? null;
-    if (localEntity && _activeMap) {
-      for (const [, p] of _activeMap) {
-        if (p.$ch === localEntity && p.$c7?.trim())
-          return p.$c7.trim();
+    try {
+      const encoded = w.localStorage?.getItem("last_nick");
+      if (encoded) {
+        const decoded = decodeURIComponent(escape(atob(encoded)));
+        if (decoded.trim())
+          return decoded.trim();
       }
+    } catch {
     }
     return null;
   }
@@ -670,10 +675,6 @@
       }
       _list.appendChild(row);
     }
-    if (_label) {
-      const count = peers.length;
-      _label.textContent = `VC (${count})`;
-    }
   }
   function initPanel() {
     const style = document.createElement("style");
@@ -688,7 +689,7 @@
     _arrow.textContent = "\u25B6";
     _arrow.classList.add("open");
     _label = document.createElement("span");
-    _label.textContent = "VC (0)";
+    _label.textContent = "voice chat";
     header.appendChild(_arrow);
     header.appendChild(_label);
     _list = document.createElement("div");
@@ -730,10 +731,9 @@
   cursor: pointer;
   padding: 3px 6px;
   border-radius: 5px;
-  background: rgba(0,0,0,0.45);
-  transition: background 0.15s;
+  transition: opacity 0.15s;
 }
-#gulpyvc-panel-header:hover { background: rgba(0,0,0,0.65); }
+#gulpyvc-panel-header:hover { opacity: 0.75; }
 #gulpyvc-panel-arrow {
   font-size: 10px;
   transition: transform 0.15s;
@@ -834,10 +834,12 @@
         initPlayers();
         win3._gulpyvc = { debug: debugPlayers, session: getSessionKey };
         onSessionReady((sessionKey) => {
-          const nick = resolveNick();
-          setLocalPeer(nick);
-          connectSignaling(sessionKey, SIGNAL_ID, nick);
-          console.log("[GulpyVC] joining session:", sessionKey, "as", nick);
+          setTimeout(() => {
+            const nick = resolveNick();
+            setLocalPeer(nick);
+            connectSignaling(sessionKey, SIGNAL_ID, nick);
+            console.log("[GulpyVC] joining session:", sessionKey, "as", nick);
+          }, 500);
         });
         function start() {
           try {

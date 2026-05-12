@@ -23,10 +23,9 @@ const CSS = `
   cursor: pointer;
   padding: 3px 6px;
   border-radius: 5px;
-  background: rgba(0,0,0,0.45);
-  transition: background 0.15s;
+  transition: opacity 0.15s;
 }
-#gulpyvc-panel-header:hover { background: rgba(0,0,0,0.65); }
+#gulpyvc-panel-header:hover { opacity: 0.75; }
 #gulpyvc-panel-arrow {
   font-size: 10px;
   transition: transform 0.15s;
@@ -113,10 +112,7 @@ function renderList() {
         _list.appendChild(row);
     }
 
-    if (_label) {
-        const count = peers.length;
-        _label.textContent = `VC (${count})`;
-    }
+    // label stays as "voice chat" - no count needed
 }
 
 export function initPanel() {
@@ -136,7 +132,7 @@ export function initPanel() {
     _arrow.classList.add('open');
 
     _label = document.createElement('span');
-    _label.textContent = 'VC (0)';
+    _label.textContent = 'voice chat';
 
     header.appendChild(_arrow);
     header.appendChild(_label);
