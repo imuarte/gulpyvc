@@ -106,7 +106,9 @@
       if (animate) {
         line.style.strokeDashoffset = "0";
         line.style.animation = "gulpyvc-erase 0.2s ease forwards";
-        line.addEventListener("animationend", () => {
+        line.addEventListener("animationend", (e) => {
+          if (e.animationName !== "gulpyvc-erase")
+            return;
           slash.style.display = "none";
           line.style.strokeDashoffset = String(SLASH_LEN);
           line.style.animation = "none";
