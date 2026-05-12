@@ -48,6 +48,12 @@ function injectStyles() {
     document.head.appendChild(style);
 }
 
+const _callbacks = {};
+
+export function setCallback(key, fn) {
+    _callbacks[key] = fn;
+}
+
 function makeButton({ key, svg, title }) {
     const wrap = document.createElement('div');
     Object.assign(wrap.style, {
@@ -86,12 +92,17 @@ function makeButton({ key, svg, title }) {
     applyState(wrap, icon, slash, state[key], false);
 
     wrap.addEventListener('click', () => {
-        state[key] = !state[key];
-        applyState(wrap, icon, slash, state[key], true);
-
-        wrap.style.animation = 'none';
-        wrap.offsetWidth; // reflow to restart
-        wrap.style.animation = 'gulpyvc-bounce 0.28s ease';
+        const next = !state[key];
+        const cb = _callbacks[key];
+        if (cb) {
+            cb(next); // callback owns state + visual update
+        } else {
+            state[key] = next;
+            applyState(wrap, icon, slash, next, true);
+            wrap.style.animation = 'none';
+            wrap.offsetWidth;
+            wrap.style.animation = 'gulpyvc-bounce 0.28s ease';
+        }
     });
 
     return wrap;

@@ -49,6 +49,9 @@
     style.textContent = CSS;
     document.head.appendChild(style);
   }
+  function setCallback(key, fn) {
+    _callbacks[key] = fn;
+  }
   function makeButton({ key, svg, title }) {
     const wrap = document.createElement("div");
     Object.assign(wrap.style, {
@@ -85,11 +88,17 @@
     wrap.appendChild(slash);
     applyState(wrap, icon, slash, state[key], false);
     wrap.addEventListener("click", () => {
-      state[key] = !state[key];
-      applyState(wrap, icon, slash, state[key], true);
-      wrap.style.animation = "none";
-      wrap.offsetWidth;
-      wrap.style.animation = "gulpyvc-bounce 0.28s ease";
+      const next = !state[key];
+      const cb = _callbacks[key];
+      if (cb) {
+        cb(next);
+      } else {
+        state[key] = next;
+        applyState(wrap, icon, slash, next, true);
+        wrap.style.animation = "none";
+        wrap.offsetWidth;
+        wrap.style.animation = "gulpyvc-bounce 0.28s ease";
+      }
     });
     return wrap;
   }
@@ -161,7 +170,7 @@
     }
     document.body.appendChild(bar);
   }
-  var COLOR_ON, COLOR_OFF, SLASH_LEN, SLASH_SVG, CSS, BTNS, btnRefs;
+  var COLOR_ON, COLOR_OFF, SLASH_LEN, SLASH_SVG, CSS, BTNS, _callbacks, btnRefs;
   var init_gui = __esm({
     "src/gui.js"() {
       init_state();
@@ -201,6 +210,7 @@
         { key: "mic", svg: microphone_default, title: "Microphone" },
         { key: "audio", svg: headphones_default, title: "Audio" }
       ];
+      _callbacks = {};
       btnRefs = {};
     }
   });
@@ -600,6 +610,8 @@
           try {
             initWebRTC();
             initGUI();
+            setCallback("mic", onMicChange);
+            setCallback("audio", onAudioChange);
             initKeys(onMicChange, onAudioChange);
             console.log("[GulpyVC] ready | session:", getSessionKey() ?? "(not yet connected)");
           } catch (e) {

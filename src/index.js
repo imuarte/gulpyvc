@@ -1,4 +1,4 @@
-import { initGUI, setKeyState } from './gui.js';
+import { initGUI, setKeyState, setCallback } from './gui.js';
 import { initKeys } from './keys.js';
 import { initSession, getSessionKey } from './session.js';
 import { initPlayers, getSessionPlayers, debugPlayers } from './players.js';
@@ -54,6 +54,8 @@ function onAudioChange(active) {
         try {
             initWebRTC();
             initGUI();
+            setCallback('mic', onMicChange);
+            setCallback('audio', onAudioChange);
             initKeys(onMicChange, onAudioChange);
             console.log('[GulpyVC] ready | session:', getSessionKey() ?? '(not yet connected)');
         } catch (e) {
