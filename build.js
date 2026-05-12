@@ -8,6 +8,8 @@ const banner = `// ==UserScript==
 // @description  Voice chat for gulper.io
 // @author       imuarte
 // @match        *://gulper.io/*
+// @updateURL    https://raw.githubusercontent.com/imuarte/gulpyvc/master/dist/gulpyvc.user.js
+// @downloadURL  https://raw.githubusercontent.com/imuarte/gulpyvc/master/dist/gulpyvc.user.js
 // @grant        none
 // ==/UserScript==
 `;
