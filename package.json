@@ -1,0 +1,12 @@
+{
+  "name": "gulpyvc",
+  "version": "0.1.0",
+  "description": "Voice chat for gulper.io",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "type": "commonjs",
+  "devDependencies": {
+    "esbuild": "^0.20.0"
+  }
+}
