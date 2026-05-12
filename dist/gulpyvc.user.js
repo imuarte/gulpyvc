@@ -86,7 +86,7 @@
     });
     wrap.appendChild(icon);
     wrap.appendChild(slash);
-    applyState(wrap, icon, slash, state[key], false);
+    applyState(icon, slash, state[key], false);
     wrap.addEventListener("click", () => {
       const next = !state[key];
       const cb = _callbacks[key];
@@ -94,45 +94,49 @@
         cb(next);
       } else {
         state[key] = next;
-        applyState(wrap, icon, slash, next, true);
-        wrap.style.animation = "none";
-        wrap.offsetWidth;
-        wrap.style.animation = "gulpyvc-bounce 0.28s ease";
+        applyState(icon, slash, next, true);
+        bounce(wrap);
       }
     });
     return wrap;
   }
-  function applyState(wrap, icon, slash, active, animate) {
+  function bounce(wrap) {
+    wrap.style.animation = "none";
+    wrap.offsetWidth;
+    wrap.style.animation = "gulpyvc-bounce 0.28s ease";
+  }
+  function applyState(icon, slash, active, animate) {
     const svgEl = icon.querySelector("svg");
     if (svgEl)
       svgEl.style.color = active ? COLOR_ON : COLOR_OFF;
-    const line = slash.querySelector(".gulpyvc-slash");
+    const line = slash.querySelector(".gulpyvc-slash-line");
     if (!line)
       return;
-    line.style.animation = "none";
-    line.offsetWidth;
     if (active) {
       if (animate) {
+        line.style.transition = "none";
         line.style.strokeDashoffset = "0";
-        line.style.animation = "gulpyvc-erase 0.2s ease forwards";
-        line.addEventListener("animationend", (e) => {
-          if (e.animationName !== "gulpyvc-erase")
-            return;
+        line.offsetWidth;
+        line.style.transition = "";
+        line.style.strokeDashoffset = String(SLASH_LEN);
+        line.addEventListener("transitionend", () => {
           slash.style.display = "none";
-          line.style.strokeDashoffset = String(SLASH_LEN);
-          line.style.animation = "none";
         }, { once: true });
       } else {
         slash.style.display = "none";
+        line.style.transition = "none";
         line.style.strokeDashoffset = String(SLASH_LEN);
       }
     } else {
       slash.style.display = "block";
-      line.style.strokeDashoffset = String(SLASH_LEN);
-      line.offsetWidth;
       if (animate) {
-        line.style.animation = "gulpyvc-draw 0.22s ease forwards";
+        line.style.transition = "none";
+        line.style.strokeDashoffset = String(SLASH_LEN);
+        line.offsetWidth;
+        line.style.transition = "";
+        line.style.strokeDashoffset = "0";
       } else {
+        line.style.transition = "none";
         line.style.strokeDashoffset = "0";
       }
     }
@@ -141,10 +145,8 @@
     const ref = btnRefs[key];
     if (!ref)
       return;
-    applyState(ref.wrap, ref.icon, ref.slash, active, true);
-    ref.wrap.style.animation = "none";
-    ref.wrap.offsetWidth;
-    ref.wrap.style.animation = "gulpyvc-bounce 0.28s ease";
+    applyState(ref.icon, ref.slash, active, true);
+    bounce(ref.wrap);
   }
   function initGUI() {
     injectStyles();
@@ -181,30 +183,19 @@
       SLASH_LEN = 21.2;
       SLASH_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
     style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none">
-  <line class="gulpyvc-slash" x1="19" y1="4" x2="4" y2="19"
+  <line class="gulpyvc-slash-line" x1="19" y1="4" x2="4" y2="19"
     stroke="${COLOR_OFF}" stroke-width="2.5" stroke-linecap="round"
     stroke-dasharray="${SLASH_LEN}" stroke-dashoffset="${SLASH_LEN}"/>
 </svg>`;
       CSS = `
-@keyframes gulpyvc-draw {
-  to { stroke-dashoffset: 0; }
-}
-@keyframes gulpyvc-erase {
-  from { stroke-dashoffset: 0; }
-  to   { stroke-dashoffset: ${SLASH_LEN}; }
-}
 @keyframes gulpyvc-bounce {
   0%   { transform: scale(1); }
   40%  { transform: scale(0.91); }
   70%  { transform: scale(1.06); }
   100% { transform: scale(1); }
 }
-#gulpyvc-bar > div {
-  transition: opacity 0.15s;
-}
-#gulpyvc-bar > div svg {
-  transition: color 0.2s ease;
-}
+#gulpyvc-bar > div svg { transition: color 0.2s ease; }
+.gulpyvc-slash-line { transition: stroke-dashoffset 0.22s ease; }
 `;
       BTNS = [
         { key: "mic", svg: microphone_default, title: "Microphone" },
@@ -350,6 +341,17 @@
   }
   function getSessionPlayers() {
     return Array.from(_players.values());
+  }
+  function getLocalNick() {
+    const input = document.querySelector("#nick-input");
+    if (input?.value?.trim())
+      return input.value.trim();
+    for (const key of ["nick", "playerName", "gulper_nick", "player_nick", "username"]) {
+      const val = localStorage.getItem(key);
+      if (val?.trim())
+        return val.trim();
+    }
+    return null;
   }
   function debugPlayers() {
     const players = getSessionPlayers();
@@ -818,6 +820,15 @@
             setCallback("mic", onMicChange);
             setCallback("audio", onAudioChange);
             initKeys(onMicChange, onAudioChange);
+            const earlyNick = getLocalNick() || getSessionPlayers()[0]?.nick || "You";
+            setLocalPeer(earlyNick);
+            const nickInput = document.querySelector("#nick-input");
+            if (nickInput) {
+              nickInput.addEventListener("input", () => {
+                if (nickInput.value.trim())
+                  setLocalPeer(nickInput.value.trim());
+              });
+            }
             console.log("[GulpyVC] ready | session:", getSessionKey() ?? "(not yet connected)");
           } catch (e) {
             console.error("[GulpyVC] init error:", e);

@@ -1,7 +1,7 @@
 import { initGUI, setKeyState, setCallback } from './gui.js';
 import { initKeys } from './keys.js';
 import { initSession, getSessionKey } from './session.js';
-import { initPlayers, getSessionPlayers, debugPlayers } from './players.js';
+import { initPlayers, getSessionPlayers, debugPlayers, getLocalNick } from './players.js';
 import { requestMic, setMicActive } from './mic.js';
 import { connectSignaling } from './signaling.js';
 import { initWebRTC, addMicToPeers, setLocalPeer, startLocalAnalyser } from './webrtc.js';
@@ -66,6 +66,21 @@ function onAudioChange(active) {
             setCallback('mic',   onMicChange);
             setCallback('audio', onAudioChange);
             initKeys(onMicChange, onAudioChange);
+
+            // Show local player immediately - try DOM nick, fall back to game players
+            const earlyNick = getLocalNick()
+                || getSessionPlayers()[0]?.nick
+                || 'You';
+            setLocalPeer(earlyNick);
+
+            // If nick input is empty now, update once the user types it
+            const nickInput = document.querySelector('#nick-input');
+            if (nickInput) {
+                nickInput.addEventListener('input', () => {
+                    if (nickInput.value.trim()) setLocalPeer(nickInput.value.trim());
+                });
+            }
+
             console.log('[GulpyVC] ready | session:', getSessionKey() ?? '(not yet connected)');
         } catch (e) {
             console.error('[GulpyVC] init error:', e);

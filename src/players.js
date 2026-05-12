@@ -82,6 +82,18 @@ export function getSessionPlayers() {
     return Array.from(_players.values());
 }
 
+export function getLocalNick() {
+    // Try the nick input field first (visible on start screen)
+    const input = document.querySelector('#nick-input');
+    if (input?.value?.trim()) return input.value.trim();
+    // Try common localStorage keys gulper.io might use
+    for (const key of ['nick', 'playerName', 'gulper_nick', 'player_nick', 'username']) {
+        const val = localStorage.getItem(key);
+        if (val?.trim()) return val.trim();
+    }
+    return null;
+}
+
 export function debugPlayers() {
     const players = getSessionPlayers();
     if (!players.length) {
