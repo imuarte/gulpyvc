@@ -241,6 +241,9 @@
   });
 
   // src/session.js
+  function onSessionReady(fn) {
+    _onReady = fn;
+  }
   function getSessionKey() {
     if (!_server)
       return null;
@@ -253,10 +256,13 @@
       const ws = protocols ? new OrigWS(url, protocols) : new OrigWS(url);
       try {
         const u = new URL(url);
+        if (!u.pathname.includes("/game/"))
+          return ws;
+        const prevKey = getSessionKey();
         _server = u.host;
         _roomPath = u.pathname !== "/" ? u.pathname : u.searchParams.get("room") || null;
-        _ws = ws;
-        console.log("[GulpyVC] session:", getSessionKey());
+        if (getSessionKey() !== prevKey)
+          _onReady?.(getSessionKey());
       } catch {
       }
       return ws;
@@ -265,13 +271,13 @@
     HookedWS.prototype = OrigWS.prototype;
     win.WebSocket = HookedWS;
   }
-  var win, _server, _roomPath, _ws;
+  var win, _server, _roomPath, _onReady;
   var init_session = __esm({
     "src/session.js"() {
       win = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
       _server = null;
       _roomPath = null;
-      _ws = null;
+      _onReady = null;
     }
   });
 
@@ -346,10 +352,13 @@
     const input = document.querySelector("#nick-input");
     if (input?.value?.trim())
       return input.value.trim();
-    for (const key of ["nick", "playerName", "gulper_nick", "player_nick", "username"]) {
-      const val = localStorage.getItem(key);
-      if (val?.trim())
-        return val.trim();
+    const w = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    const localEntity = w._ghGame?.$me?.$bp ?? w._ghGame?.$bp ?? null;
+    if (localEntity && _activeMap) {
+      for (const [, p] of _activeMap) {
+        if (p.$ch === localEntity && p.$c7?.trim())
+          return p.$c7.trim();
+      }
     }
     return null;
   }
@@ -417,37 +426,37 @@
       fn(msg);
   }
   function connectSignaling(sessionKey, peerId, nick) {
-    if (_ws2 && _ws2.readyState <= 1)
+    if (_ws && _ws.readyState <= 1)
       return;
     _sessionKey = sessionKey;
     _peerId = String(peerId);
     _nick = nick;
-    _ws2 = new WebSocket(SIGNAL_URL);
-    _ws2.onopen = () => {
-      _ws2.send(JSON.stringify({ type: "join", session: _sessionKey, peerId: _peerId, nick: _nick }));
+    _ws = new WebSocket(SIGNAL_URL);
+    _ws.onopen = () => {
+      _ws.send(JSON.stringify({ type: "join", session: _sessionKey, peerId: _peerId, nick: _nick }));
       console.log("[GulpyVC] signaling connected");
     };
-    _ws2.onmessage = (e) => {
+    _ws.onmessage = (e) => {
       try {
         dispatch(JSON.parse(e.data));
       } catch {
       }
     };
-    _ws2.onclose = () => {
+    _ws.onclose = () => {
       console.log("[GulpyVC] signaling disconnected");
-      _ws2 = null;
+      _ws = null;
       setTimeout(() => connectSignaling(_sessionKey, _peerId, _nick), 3e3);
     };
   }
   function sendSignal(msg) {
-    if (_ws2 && _ws2.readyState === 1)
-      _ws2.send(JSON.stringify(msg));
+    if (_ws && _ws.readyState === 1)
+      _ws.send(JSON.stringify(msg));
   }
-  var SIGNAL_URL, _ws2, _sessionKey, _peerId, _nick, _handlers;
+  var SIGNAL_URL, _ws, _sessionKey, _peerId, _nick, _handlers;
   var init_signaling = __esm({
     "src/signaling.js"() {
       SIGNAL_URL = "wss://gulpyvc-signal.fly.dev";
-      _ws2 = null;
+      _ws = null;
       _sessionKey = null;
       _peerId = null;
       _nick = null;
@@ -520,6 +529,7 @@
       const audio = document.createElement("audio");
       audio.autoplay = true;
       audio.srcObject = streams[0];
+      audio.dataset.gulpyvc = remoteId;
       document.body.appendChild(audio);
       startAnalyser(streams[0], (speaking) => {
         const info = _info.get(remoteId);
@@ -592,6 +602,21 @@
           await pc.addIceCandidate(candidate);
         } catch {
         }
+    });
+    onSignal("mic-state", ({ from, active }) => {
+      const audio = document.querySelector(`audio[data-gulpyvc="${from}"]`);
+      if (audio)
+        audio.muted = !active;
+      const info = _info.get(from);
+      if (info && !active) {
+        info.speaking = false;
+        _onChange?.();
+      }
+    });
+  }
+  function setAudioEnabled(enabled) {
+    document.querySelectorAll("audio[data-gulpyvc]").forEach((a) => {
+      a.muted = !enabled;
     });
   }
   function addMicToPeers() {
@@ -725,16 +750,14 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 7px;
+  padding: 2px 7px;
   border-radius: 4px;
-  background: rgba(0,0,0,0.38);
-  transition: background 0.15s;
+  transition: color 0.15s;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .gulpyvc-peer.speaking {
-  background: rgba(76,175,80,0.22);
   color: #afffb2;
   text-shadow: 0 0 6px rgba(100,255,110,0.5);
 }
@@ -776,8 +799,8 @@
       init_panel();
       init_state();
       var win3 = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+      var SIGNAL_ID = Math.random().toString(36).slice(2, 10);
       var _micReady = false;
-      var _connected = false;
       async function onMicChange(active) {
         if (active && !_micReady) {
           try {
@@ -795,23 +818,27 @@
         state.mic = active;
         setMicActive(active);
         setKeyState("mic", active);
-        if (active && !_connected && getSessionKey()) {
-          _connected = true;
-          const me = getSessionPlayers()[0];
-          const nick = me?.nick || "Player";
-          setLocalPeer(nick);
-          connectSignaling(getSessionKey(), me?.id ?? "unknown", nick);
-        }
+        sendSignal({ type: "mic-state", active });
       }
       function onAudioChange(active) {
         state.audio = active;
+        setAudioEnabled(active);
         setKeyState("audio", active);
+      }
+      function resolveNick() {
+        return getLocalNick() || getSessionPlayers()[0]?.nick || "Player";
       }
       (function() {
         "use strict";
         initSession();
         initPlayers();
         win3._gulpyvc = { debug: debugPlayers, session: getSessionKey };
+        onSessionReady((sessionKey) => {
+          const nick = resolveNick();
+          setLocalPeer(nick);
+          connectSignaling(sessionKey, SIGNAL_ID, nick);
+          console.log("[GulpyVC] joining session:", sessionKey, "as", nick);
+        });
         function start() {
           try {
             initWebRTC();
@@ -820,8 +847,8 @@
             setCallback("mic", onMicChange);
             setCallback("audio", onAudioChange);
             initKeys(onMicChange, onAudioChange);
-            const earlyNick = getLocalNick() || getSessionPlayers()[0]?.nick || "You";
-            setLocalPeer(earlyNick);
+            const nick = resolveNick();
+            setLocalPeer(nick);
             const nickInput = document.querySelector("#nick-input");
             if (nickInput) {
               nickInput.addEventListener("input", () => {
@@ -829,7 +856,7 @@
                   setLocalPeer(nickInput.value.trim());
               });
             }
-            console.log("[GulpyVC] ready | session:", getSessionKey() ?? "(not yet connected)");
+            console.log("[GulpyVC] ready");
           } catch (e) {
             console.error("[GulpyVC] init error:", e);
           }

@@ -83,14 +83,19 @@ export function getSessionPlayers() {
 }
 
 export function getLocalNick() {
-    // Try the nick input field first (visible on start screen)
+    // 1. Nick input (reliable - set before game starts, value persists while hidden)
     const input = document.querySelector('#nick-input');
     if (input?.value?.trim()) return input.value.trim();
-    // Try common localStorage keys gulper.io might use
-    for (const key of ['nick', 'playerName', 'gulper_nick', 'player_nick', 'username']) {
-        const val = localStorage.getItem(key);
-        if (val?.trim()) return val.trim();
+
+    // 2. gulper.io stores the game instance as window._ghGame
+    const w = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    const localEntity = w._ghGame?.$me?.$bp ?? w._ghGame?.$bp ?? null;
+    if (localEntity && _activeMap) {
+        for (const [, p] of _activeMap) {
+            if (p.$ch === localEntity && p.$c7?.trim()) return p.$c7.trim();
+        }
     }
+
     return null;
 }
 

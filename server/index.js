@@ -57,6 +57,10 @@ wss.on('connection', ws => {
         if (msg.type === 'offer' || msg.type === 'answer' || msg.type === 'ice') {
             relay(session, String(msg.to), { ...msg, from: peerId });
         }
+
+        if (msg.type === 'mic-state') {
+            broadcast(session, { type: 'mic-state', from: peerId, active: msg.active }, peerId);
+        }
     });
 
     ws.on('close', () => {

@@ -79,6 +79,7 @@ function createPeer(remoteId, polite, nick) {
         const audio = document.createElement('audio');
         audio.autoplay = true;
         audio.srcObject = streams[0];
+        audio.dataset.gulpyvc = remoteId;
         document.body.appendChild(audio);
 
         // speaking detection for this peer
@@ -150,6 +151,24 @@ export function initWebRTC() {
         const pc = _peers.get(from);
         if (pc) try { await pc.addIceCandidate(candidate); } catch {}
     });
+
+    // Mute/unmute audio element when remote peer changes mic state
+    onSignal('mic-state', ({ from, active }) => {
+        const audio = document.querySelector(`audio[data-gulpyvc="${from}"]`);
+        if (audio) audio.muted = !active;
+
+        // Update speaking dot state
+        const info = _info.get(from);
+        if (info && !active) {
+            info.speaking = false;
+            _onChange?.();
+        }
+    });
+}
+
+// mute/unmute all remote audio elements
+export function setAudioEnabled(enabled) {
+    document.querySelectorAll('audio[data-gulpyvc]').forEach(a => { a.muted = !enabled; });
 }
 
 export function addMicToPeers() {

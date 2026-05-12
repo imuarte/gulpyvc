@@ -1,14 +1,15 @@
 const win = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
-let _server = null;
-let _roomPath = null;
-let _ws = null;
+let _server    = null;
+let _roomPath  = null;
+let _onReady   = null;
 
 export function getServer()   { return _server; }
 export function getRoomPath() { return _roomPath; }
+export function onSessionReady(fn) { _onReady = fn; }
+
 export function getSessionKey() {
     if (!_server) return null;
-    // Strip trailing reconnection counter e.g. /69FF42EB/2 -> /69FF42EB
     const path = _roomPath ? _roomPath.replace(/\/\d+$/, '') : null;
     return path ? `${_server}${path}` : _server;
 }
@@ -20,10 +21,15 @@ export function initSession() {
         const ws = protocols ? new OrigWS(url, protocols) : new OrigWS(url);
         try {
             const u = new URL(url);
+            // Only fire for actual game connections (has /game/ in path)
+            if (!u.pathname.includes('/game/')) return ws;
+
+            const prevKey = getSessionKey();
             _server   = u.host;
             _roomPath = u.pathname !== '/' ? u.pathname : (u.searchParams.get('room') || null);
-            _ws = ws;
-            console.log('[GulpyVC] session:', getSessionKey());
+
+            // Fire only on new session (not reconnects to same room)
+            if (getSessionKey() !== prevKey) _onReady?.(getSessionKey());
         } catch {}
         return ws;
     }

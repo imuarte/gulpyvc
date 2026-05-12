@@ -1,20 +1,21 @@
 import { initGUI, setKeyState, setCallback } from './gui.js';
 import { initKeys } from './keys.js';
-import { initSession, getSessionKey } from './session.js';
+import { initSession, onSessionReady, getSessionKey } from './session.js';
 import { initPlayers, getSessionPlayers, debugPlayers, getLocalNick } from './players.js';
 import { requestMic, setMicActive } from './mic.js';
-import { connectSignaling } from './signaling.js';
-import { initWebRTC, addMicToPeers, setLocalPeer, startLocalAnalyser } from './webrtc.js';
+import { connectSignaling, sendSignal } from './signaling.js';
+import { initWebRTC, addMicToPeers, setLocalPeer, startLocalAnalyser, setAudioEnabled } from './webrtc.js';
 import { initPanel } from './panel.js';
 import { state } from './state.js';
 
 const win = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
-let _micReady  = false;
-let _connected = false;
+// Unique ID for signaling (independent of game player ID)
+const SIGNAL_ID = Math.random().toString(36).slice(2, 10);
+
+let _micReady = false;
 
 async function onMicChange(active) {
-    // First enable: request mic permission
     if (active && !_micReady) {
         try {
             await requestMic();
@@ -23,31 +24,30 @@ async function onMicChange(active) {
             startLocalAnalyser();
         } catch (e) {
             console.warn('[GulpyVC] mic permission denied:', e.message);
-            // revert visual
             state.mic = false;
             setKeyState('mic', false);
             return;
         }
     }
 
-    // Update state and visual
     state.mic = active;
     setMicActive(active);
     setKeyState('mic', active);
 
-    // Connect to signaling on first mic enable
-    if (active && !_connected && getSessionKey()) {
-        _connected = true;
-        const me = getSessionPlayers()[0];
-        const nick = me?.nick || 'Player';
-        setLocalPeer(nick);
-        connectSignaling(getSessionKey(), me?.id ?? 'unknown', nick);
-    }
+    // Tell peers our mic state so they can mute us on their end
+    sendSignal({ type: 'mic-state', active });
 }
 
 function onAudioChange(active) {
     state.audio = active;
+    setAudioEnabled(active);
     setKeyState('audio', active);
+}
+
+function resolveNick() {
+    return getLocalNick()
+        || getSessionPlayers()[0]?.nick
+        || 'Player';
 }
 
 (function () {
@@ -58,6 +58,14 @@ function onAudioChange(active) {
 
     win._gulpyvc = { debug: debugPlayers, session: getSessionKey };
 
+    // Auto-connect to signaling when game session is detected
+    onSessionReady(sessionKey => {
+        const nick = resolveNick();
+        setLocalPeer(nick);
+        connectSignaling(sessionKey, SIGNAL_ID, nick);
+        console.log('[GulpyVC] joining session:', sessionKey, 'as', nick);
+    });
+
     function start() {
         try {
             initWebRTC();
@@ -67,13 +75,11 @@ function onAudioChange(active) {
             setCallback('audio', onAudioChange);
             initKeys(onMicChange, onAudioChange);
 
-            // Show local player immediately - try DOM nick, fall back to game players
-            const earlyNick = getLocalNick()
-                || getSessionPlayers()[0]?.nick
-                || 'You';
-            setLocalPeer(earlyNick);
+            // Show self immediately even before session is ready
+            const nick = resolveNick();
+            setLocalPeer(nick);
 
-            // If nick input is empty now, update once the user types it
+            // Update nick if user changes it in the input
             const nickInput = document.querySelector('#nick-input');
             if (nickInput) {
                 nickInput.addEventListener('input', () => {
@@ -81,7 +87,7 @@ function onAudioChange(active) {
                 });
             }
 
-            console.log('[GulpyVC] ready | session:', getSessionKey() ?? '(not yet connected)');
+            console.log('[GulpyVC] ready');
         } catch (e) {
             console.error('[GulpyVC] init error:', e);
         }

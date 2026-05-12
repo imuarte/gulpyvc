@@ -43,16 +43,14 @@ const CSS = `
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 7px;
+  padding: 2px 7px;
   border-radius: 4px;
-  background: rgba(0,0,0,0.38);
-  transition: background 0.15s;
+  transition: color 0.15s;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .gulpyvc-peer.speaking {
-  background: rgba(76,175,80,0.22);
   color: #afffb2;
   text-shadow: 0 0 6px rgba(100,255,110,0.5);
 }
