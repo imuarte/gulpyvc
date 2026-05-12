@@ -1,4 +1,5 @@
 import { state } from './state.js';
+import { toggleUIVisible } from './gui.js';
 
 export function initKeys(onMicChange, onAudioChange) {
     const isTyping = () => ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName);
@@ -18,6 +19,9 @@ export function initKeys(onMicChange, onAudioChange) {
         if (e.code === 'KeyV') {
             state.mic = true;
             onMicChange(true);
+        }
+        if (e.code === 'KeyU') {
+            toggleUIVisible();
         }
     });
 

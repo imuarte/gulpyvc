@@ -56,7 +56,7 @@ function makeButton({ key, svg, title }) {
         display: 'flex', alignItems: 'center', justifyContent: 'center',
     });
     const svgEl = icon.querySelector('svg');
-    if (svgEl) Object.assign(svgEl.style, { width: '24px', height: '24px', display: 'block' });
+    if (svgEl) Object.assign(svgEl.style, { width: 'auto', height: '22px', display: 'block' });
 
     const slash = document.createElement('div');
     slash.innerHTML = SLASH_SVG;
@@ -139,6 +139,14 @@ export function setKeyState(key, active) {
     if (!ref) return;
     applyState(ref.icon, ref.slash, active, true);
     bounce(ref.wrap);
+}
+
+export function toggleUIVisible() {
+    const bar = document.getElementById('gulpyvc-bar');
+    const panel = document.getElementById('gulpyvc-panel');
+    const hidden = bar?.style.display === 'none';
+    if (bar)   bar.style.display   = hidden ? 'flex' : 'none';
+    if (panel) panel.style.display = hidden ? ''     : 'none';
 }
 
 export function initGUI() {

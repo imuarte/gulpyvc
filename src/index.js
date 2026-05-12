@@ -71,7 +71,19 @@ function resolveNick() {
         const nick = resolveNick();
         setLocalPeer(nick);
         connectSignaling(sessionKey, SIGNAL_ID, nick);
-        console.log('[GulpyVC] joining session:', sessionKey, 'as', nick);
+
+        // Nick may not be known yet at connection time - retry for up to 3s
+        let attempts = 0;
+        const interval = setInterval(() => {
+            const resolved = resolveNick();
+            if (resolved !== 'Player' && resolved !== nick) {
+                clearInterval(interval);
+                setLocalPeer(resolved);
+                connectSignaling(sessionKey, SIGNAL_ID, resolved);
+            } else if (++attempts >= 6) {
+                clearInterval(interval);
+            }
+        }, 500);
     });
 
     function start() {

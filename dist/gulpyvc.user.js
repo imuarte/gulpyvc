@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GulpyVC
 // @namespace    gulpyvc
-// @version      0.1.0
+// @version      1.0.0
 // @description  Voice chat for gulper.io
 // @author       imuarte
 // @match        *://gulper.io/*
@@ -31,7 +31,7 @@
   var microphone_default;
   var init_microphone = __esm({
     "src/assets/microphone.svg"() {
-      microphone_default = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">\n  <rect x="9" y="2" width="6" height="11" rx="3"/>\n  <path d="M5 11a7 7 0 0 0 14 0h-2a5 5 0 0 1-10 0H5z"/>\n  <line x1="12" y1="18" x2="12" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>\n  <line x1="9"  y1="21" x2="15" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>\n</svg>\n';
+      microphone_default = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="128 64 384 512" fill="currentColor">\n  <path d="M320 64C267 64 224 107 224 160L224 288C224 341 267 384 320 384C373 384 416 341 416 288L416 160C416 107 373 64 320 64zM176 248C176 234.7 165.3 224 152 224C138.7 224 128 234.7 128 248L128 288C128 385.9 201.3 466.7 296 478.5L296 528L248 528C234.7 528 224 538.7 224 552C224 565.3 234.7 576 248 576L392 576C405.3 576 416 565.3 416 552C416 538.7 405.3 528 392 528L344 528L344 478.5C438.7 466.7 512 385.9 512 288L512 248C512 234.7 501.3 224 488 224C474.7 224 464 234.7 464 248L464 288C464 367.5 399.5 432 320 432C240.5 432 176 367.5 176 288L176 248z"/>\n</svg>\n';
     }
   });
 
@@ -39,7 +39,7 @@
   var headphones_default;
   var init_headphones = __esm({
     "src/assets/headphones.svg"() {
-      headphones_default = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">\n  <path d="M3 13v-1a9 9 0 0 1 18 0v1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>\n  <rect x="2"  y="13" width="4" height="7" rx="2"/>\n  <rect x="18" y="13" width="4" height="7" rx="2"/>\n</svg>\n';
+      headphones_default = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="96 64 448 480" fill="currentColor">\n  <path d="M160 288C160 199.6 231.6 128 320 128C408.4 128 480 199.6 480 288L480 325.5C470 322 459.2 320 448 320L432 320C405.5 320 384 341.5 384 368L384 496C384 522.5 405.5 544 432 544L448 544C501 544 544 501 544 448L544 288C544 164.3 443.7 64 320 64C196.3 64 96 164.3 96 288L96 448C96 501 139 544 192 544L208 544C234.5 544 256 522.5 256 496L256 368C256 341.5 234.5 320 208 320L192 320C180.8 320 170 321.9 160 325.5L160 288z"/>\n</svg>\n';
     }
   });
 
@@ -73,7 +73,7 @@
     });
     const svgEl = icon.querySelector("svg");
     if (svgEl)
-      Object.assign(svgEl.style, { width: "24px", height: "24px", display: "block" });
+      Object.assign(svgEl.style, { width: "auto", height: "22px", display: "block" });
     const slash = document.createElement("div");
     slash.innerHTML = SLASH_SVG;
     Object.assign(slash.style, {
@@ -147,6 +147,15 @@
       return;
     applyState(ref.icon, ref.slash, active, true);
     bounce(ref.wrap);
+  }
+  function toggleUIVisible() {
+    const bar = document.getElementById("gulpyvc-bar");
+    const panel = document.getElementById("gulpyvc-panel");
+    const hidden = bar?.style.display === "none";
+    if (bar)
+      bar.style.display = hidden ? "flex" : "none";
+    if (panel)
+      panel.style.display = hidden ? "" : "none";
   }
   function initGUI() {
     injectStyles();
@@ -226,6 +235,9 @@
         state.mic = true;
         onMicChange(true);
       }
+      if (e.code === "KeyU") {
+        toggleUIVisible();
+      }
     });
     document.addEventListener("keyup", (e) => {
       if (e.code === "KeyV") {
@@ -237,6 +249,7 @@
   var init_keys = __esm({
     "src/keys.js"() {
       init_state();
+      init_gui();
     }
   });
 
@@ -282,6 +295,12 @@
   });
 
   // src/players.js
+  function _fireLocalNick(nick) {
+    if (!nick || nick === _lastFiredNick)
+      return;
+    _lastFiredNick = nick;
+    _onLocalNick?.(nick);
+  }
   function isPlayerObj(value) {
     if (!value || typeof value !== "object")
       return false;
@@ -334,11 +353,31 @@
     });
     hookObjectProperty("$bp", BP_SLOT, (owner, value) => {
       const nick = value?.[K_NICK]?.trim();
-      if (nick) {
-        console.log("[GulpyVC] local nick detected:", nick);
-        _onLocalNick?.(nick);
-      }
+      if (nick)
+        _fireLocalNick(nick);
     });
+    const origSend = win2.WebSocket.prototype.send;
+    win2.WebSocket.prototype.send = function(data) {
+      if (!_lastFiredNick) {
+        try {
+          let text = null;
+          if (typeof data === "string") {
+            text = data;
+          } else if (data instanceof ArrayBuffer && data.byteLength < 2048) {
+            text = new TextDecoder().decode(data);
+          } else if (ArrayBuffer.isView(data) && data.byteLength < 2048) {
+            text = new TextDecoder().decode(data);
+          }
+          if (text) {
+            const m = text.match(/"nick"\s*:\s*"([^"]{1,64})"/);
+            if (m?.[1])
+              _fireLocalNick(m[1]);
+          }
+        } catch {
+        }
+      }
+      return origSend.apply(this, arguments);
+    };
     const origSet = win2.Map.prototype.set;
     win2.Map.prototype.set = function(key, value) {
       if (isPlayerObj(value)) {
@@ -358,21 +397,13 @@
     return Array.from(_players.values());
   }
   function getLocalNick() {
-    const w = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
-    const liveNick = w._ghGame?.$me?.$bp?.[K_NICK]?.trim();
-    if (liveNick)
-      return liveNick;
-    const localId = w._ghGame?.$c1;
-    if (localId != null && _activeMap) {
-      for (const [, p] of _activeMap) {
-        if (p[K_ID] === localId && p[K_NICK]?.trim())
-          return p[K_NICK].trim();
-      }
-    }
+    if (_lastFiredNick)
+      return _lastFiredNick;
     const input = document.querySelector("#nick-input");
     if (input?.value?.trim())
       return input.value.trim();
     try {
+      const w = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
       const encoded = w.localStorage?.getItem("last_nick");
       if (encoded) {
         const decoded = decodeURIComponent(escape(atob(encoded)));
@@ -394,7 +425,7 @@
       console.log(`  id=${p.id}  nick="${p.nick}"  score=${p.score}`);
     console.groupEnd();
   }
-  var K_ID, K_NICK, K_SCORE, K_DEAD, K_SPAWN, win2, PLAYER_MAP_SLOT, MANAGER_SLOT, BP_SLOT, _activeMap, _onLocalNick, _knownMaps, _players;
+  var K_ID, K_NICK, K_SCORE, K_DEAD, K_SPAWN, win2, PLAYER_MAP_SLOT, MANAGER_SLOT, BP_SLOT, _activeMap, _onLocalNick, _lastFiredNick, _knownMaps, _players;
   var init_players = __esm({
     "src/players.js"() {
       K_ID = "$c1";
@@ -408,6 +439,7 @@
       BP_SLOT = Symbol("gulpyvcBP");
       _activeMap = null;
       _onLocalNick = null;
+      _lastFiredNick = null;
       _knownMaps = /* @__PURE__ */ new Set();
       _players = /* @__PURE__ */ new Map();
     }
@@ -872,7 +904,17 @@
           const nick = resolveNick();
           setLocalPeer(nick);
           connectSignaling(sessionKey, SIGNAL_ID, nick);
-          console.log("[GulpyVC] joining session:", sessionKey, "as", nick);
+          let attempts = 0;
+          const interval = setInterval(() => {
+            const resolved = resolveNick();
+            if (resolved !== "Player" && resolved !== nick) {
+              clearInterval(interval);
+              setLocalPeer(resolved);
+              connectSignaling(sessionKey, SIGNAL_ID, resolved);
+            } else if (++attempts >= 6) {
+              clearInterval(interval);
+            }
+          }, 500);
         });
         function start() {
           try {

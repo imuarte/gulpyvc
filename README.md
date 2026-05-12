@@ -8,3 +8,4 @@ Simple voice chat for gulper.io
 | `M` | Toggle microphone on/off |
 | `V` | Push-to-talk (hold to speak) |
 | `H` | Toggle audio on/off |
+| `U` | Hide/show the UI |

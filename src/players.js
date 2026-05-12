@@ -10,10 +10,17 @@ const PLAYER_MAP_SLOT = Symbol('gulpyvcPlayerMap');
 const MANAGER_SLOT    = Symbol('gulpyvcManager');
 const BP_SLOT         = Symbol('gulpyvcBP');
 
-let _activeMap   = null;
-let _onLocalNick = null; // callback(nick) when local player is assigned
-const _knownMaps = new Set();
-const _players   = new Map();
+let _activeMap      = null;
+let _onLocalNick    = null;
+let _lastFiredNick  = null;
+const _knownMaps    = new Set();
+const _players      = new Map();
+
+function _fireLocalNick(nick) {
+    if (!nick || nick === _lastFiredNick) return;
+    _lastFiredNick = nick;
+    _onLocalNick?.(nick);
+}
 
 function isPlayerObj(value) {
     if (!value || typeof value !== 'object') return false;
@@ -60,14 +67,33 @@ export function initPlayers() {
         if (value?.$bo instanceof Map) trackMap(value.$bo);
     });
 
-    // $bp is the local player object - fires exactly when server assigns us our slot
+    // $bp is the local player object - fires when server assigns us our slot
     hookObjectProperty('$bp', BP_SLOT, (owner, value) => {
         const nick = value?.[K_NICK]?.trim();
-        if (nick) {
-            console.log('[GulpyVC] local nick detected:', nick);
-            _onLocalNick?.(nick);
-        }
+        if (nick) _fireLocalNick(nick);
     });
+
+    // Intercept WebSocket send to catch the join packet which contains {"nick":"..."}
+    const origSend = win.WebSocket.prototype.send;
+    win.WebSocket.prototype.send = function (data) {
+        if (!_lastFiredNick) {
+            try {
+                let text = null;
+                if (typeof data === 'string') {
+                    text = data;
+                } else if (data instanceof ArrayBuffer && data.byteLength < 2048) {
+                    text = new TextDecoder().decode(data);
+                } else if (ArrayBuffer.isView(data) && data.byteLength < 2048) {
+                    text = new TextDecoder().decode(data);
+                }
+                if (text) {
+                    const m = text.match(/"nick"\s*:\s*"([^"]{1,64})"/);
+                    if (m?.[1]) _fireLocalNick(m[1]);
+                }
+            } catch {}
+        }
+        return origSend.apply(this, arguments);
+    };
 
     const origSet = win.Map.prototype.set;
     win.Map.prototype.set = function (key, value) {
@@ -90,26 +116,16 @@ export function getSessionPlayers() {
 }
 
 export function getLocalNick() {
-    const w = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    // 1. Already fired via $bp hook or WS intercept
+    if (_lastFiredNick) return _lastFiredNick;
 
-    // 1. Live game object - set once server assigns us a player
-    const liveNick = w._ghGame?.$me?.$bp?.[K_NICK]?.trim();
-    if (liveNick) return liveNick;
-
-    // 2. Match by game.$c1 (local player ID) against player map
-    const localId = w._ghGame?.$c1;
-    if (localId != null && _activeMap) {
-        for (const [, p] of _activeMap) {
-            if (p[K_ID] === localId && p[K_NICK]?.trim()) return p[K_NICK].trim();
-        }
-    }
-
-    // 3. Nick input field
+    // 2. Nick input field
     const input = document.querySelector('#nick-input');
     if (input?.value?.trim()) return input.value.trim();
 
-    // 4. localStorage - gulper.io stores as btoa(unescape(encodeURIComponent(nick)))
+    // 3. localStorage - gulper.io stores as btoa(unescape(encodeURIComponent(nick)))
     try {
+        const w = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
         const encoded = w.localStorage?.getItem('last_nick');
         if (encoded) {
             const decoded = decodeURIComponent(escape(atob(encoded)));

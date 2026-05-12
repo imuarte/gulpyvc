@@ -4,7 +4,7 @@ const fs = require('fs');
 const banner = `// ==UserScript==
 // @name         GulpyVC
 // @namespace    gulpyvc
-// @version      0.1.0
+// @version      1.0.0
 // @description  Voice chat for gulper.io
 // @author       imuarte
 // @match        *://gulper.io/*
