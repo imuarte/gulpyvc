@@ -2,26 +2,93 @@ import { getMicStream } from './mic.js';
 import { sendSignal, onSignal } from './signaling.js';
 
 const STUN = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+const SPEAKING_THRESHOLD = 12;
+const SPEAKING_POLL_MS   = 80;
 
 // peerId -> RTCPeerConnection
 const _peers = new Map();
 
-function createPeer(remoteId, polite) {
+// peerId -> { nick, speaking, audioCtx, analyser }
+const _info = new Map();
+
+let _localInfo = null; // { nick, speaking, analyser }
+let _audioCtx  = null;
+let _onChange  = null;
+
+export function onPeerListChange(fn) { _onChange = fn; }
+
+export function getPeerList() {
+    const list = [];
+    if (_localInfo) list.push({ id: '__local__', ..._localInfo, local: true });
+    for (const [id, info] of _info) list.push({ id, ...info, local: false });
+    return list;
+}
+
+export function setLocalPeer(nick) {
+    _localInfo = { nick, speaking: false, analyser: null };
+    _onChange?.();
+}
+
+function getAudioCtx() {
+    if (!_audioCtx) _audioCtx = new AudioContext();
+    return _audioCtx;
+}
+
+function startAnalyser(stream, onSpeaking) {
+    try {
+        const ctx = getAudioCtx();
+        const source   = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+        const buf = new Uint8Array(analyser.frequencyBinCount);
+
+        const id = setInterval(() => {
+            analyser.getByteFrequencyData(buf);
+            const level = buf.reduce((a, b) => a + b, 0) / buf.length;
+            onSpeaking(level > SPEAKING_THRESHOLD);
+        }, SPEAKING_POLL_MS);
+
+        return () => clearInterval(id);
+    } catch { return () => {}; }
+}
+
+export function startLocalAnalyser() {
+    const stream = getMicStream();
+    if (!stream || !_localInfo) return;
+    startAnalyser(stream, speaking => {
+        if (_localInfo.speaking !== speaking) {
+            _localInfo.speaking = speaking;
+            _onChange?.();
+        }
+    });
+}
+
+function createPeer(remoteId, polite, nick) {
     if (_peers.has(remoteId)) return _peers.get(remoteId);
 
     const pc = new RTCPeerConnection(STUN);
     _peers.set(remoteId, pc);
+    _info.set(remoteId, { nick: nick || remoteId, speaking: false });
+    _onChange?.();
 
-    // Add mic track
     const stream = getMicStream();
     if (stream) stream.getTracks().forEach(t => pc.addTrack(t, stream));
 
-    // Play remote audio
     pc.ontrack = ({ streams }) => {
         const audio = document.createElement('audio');
         audio.autoplay = true;
         audio.srcObject = streams[0];
         document.body.appendChild(audio);
+
+        // speaking detection for this peer
+        startAnalyser(streams[0], speaking => {
+            const info = _info.get(remoteId);
+            if (info && info.speaking !== speaking) {
+                info.speaking = speaking;
+                _onChange?.();
+            }
+        });
     };
 
     pc.onicecandidate = ({ candidate }) => {
@@ -37,41 +104,32 @@ function createPeer(remoteId, polite) {
         }
     };
 
-    // Perfect negotiation - polite peer rolls back on collision
-    pc.onsignalingstatechange = () => {};
-
     pc._polite = polite;
-    pc._makingOffer = false;
     return pc;
 }
 
 function removePeer(id) {
     const pc = _peers.get(id);
     if (pc) { pc.close(); _peers.delete(id); }
+    _info.delete(id);
+    _onChange?.();
 }
 
 export function initWebRTC() {
     onSignal('peers', ({ peers }) => {
-        for (const p of peers) {
-            console.log('[GulpyVC] existing peer:', p.id, p.nick);
-            createPeer(p.id, true); // we are polite to existing peers
-        }
+        for (const p of peers) createPeer(p.id, true, p.nick);
     });
 
     onSignal('peer-joined', ({ id, nick }) => {
-        console.log('[GulpyVC] peer joined VC:', id, nick);
-        createPeer(id, false); // they joined after us, we are impolite
+        createPeer(id, false, nick);
     });
 
-    onSignal('peer-left', ({ id }) => {
-        console.log('[GulpyVC] peer left VC:', id);
-        removePeer(id);
-    });
+    onSignal('peer-left', ({ id }) => removePeer(id));
 
     onSignal('offer', async ({ from, sdp }) => {
         const pc = createPeer(from, true);
         const offerCollision = sdp.type === 'offer' && (pc._makingOffer || pc.signalingState !== 'stable');
-        if (offerCollision && !pc._polite) return; // impolite: ignore
+        if (offerCollision && !pc._polite) return;
         try {
             await pc.setRemoteDescription(sdp);
             if (sdp.type === 'offer') {
@@ -85,14 +143,12 @@ export function initWebRTC() {
 
     onSignal('answer', async ({ from, sdp }) => {
         const pc = _peers.get(from);
-        if (!pc) return;
-        try { await pc.setRemoteDescription(sdp); } catch {}
+        if (pc) try { await pc.setRemoteDescription(sdp); } catch {}
     });
 
     onSignal('ice', async ({ from, candidate }) => {
         const pc = _peers.get(from);
-        if (!pc) return;
-        try { await pc.addIceCandidate(candidate); } catch {}
+        if (pc) try { await pc.addIceCandidate(candidate); } catch {}
     });
 }
 

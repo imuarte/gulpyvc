@@ -454,11 +454,63 @@
   });
 
   // src/webrtc.js
-  function createPeer(remoteId, polite) {
+  function onPeerListChange(fn) {
+    _onChange = fn;
+  }
+  function getPeerList() {
+    const list = [];
+    if (_localInfo)
+      list.push({ id: "__local__", ..._localInfo, local: true });
+    for (const [id, info] of _info)
+      list.push({ id, ...info, local: false });
+    return list;
+  }
+  function setLocalPeer(nick) {
+    _localInfo = { nick, speaking: false, analyser: null };
+    _onChange?.();
+  }
+  function getAudioCtx() {
+    if (!_audioCtx)
+      _audioCtx = new AudioContext();
+    return _audioCtx;
+  }
+  function startAnalyser(stream, onSpeaking) {
+    try {
+      const ctx = getAudioCtx();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+      const buf = new Uint8Array(analyser.frequencyBinCount);
+      const id = setInterval(() => {
+        analyser.getByteFrequencyData(buf);
+        const level = buf.reduce((a, b) => a + b, 0) / buf.length;
+        onSpeaking(level > SPEAKING_THRESHOLD);
+      }, SPEAKING_POLL_MS);
+      return () => clearInterval(id);
+    } catch {
+      return () => {
+      };
+    }
+  }
+  function startLocalAnalyser() {
+    const stream = getMicStream();
+    if (!stream || !_localInfo)
+      return;
+    startAnalyser(stream, (speaking) => {
+      if (_localInfo.speaking !== speaking) {
+        _localInfo.speaking = speaking;
+        _onChange?.();
+      }
+    });
+  }
+  function createPeer(remoteId, polite, nick) {
     if (_peers.has(remoteId))
       return _peers.get(remoteId);
     const pc = new RTCPeerConnection(STUN);
     _peers.set(remoteId, pc);
+    _info.set(remoteId, { nick: nick || remoteId, speaking: false });
+    _onChange?.();
     const stream = getMicStream();
     if (stream)
       stream.getTracks().forEach((t) => pc.addTrack(t, stream));
@@ -467,6 +519,13 @@
       audio.autoplay = true;
       audio.srcObject = streams[0];
       document.body.appendChild(audio);
+      startAnalyser(streams[0], (speaking) => {
+        const info = _info.get(remoteId);
+        if (info && info.speaking !== speaking) {
+          info.speaking = speaking;
+          _onChange?.();
+        }
+      });
     };
     pc.onicecandidate = ({ candidate }) => {
       if (candidate)
@@ -480,10 +539,7 @@
         console.error("[GulpyVC] offer error", e);
       }
     };
-    pc.onsignalingstatechange = () => {
-    };
     pc._polite = polite;
-    pc._makingOffer = false;
     return pc;
   }
   function removePeer(id) {
@@ -492,22 +548,18 @@
       pc.close();
       _peers.delete(id);
     }
+    _info.delete(id);
+    _onChange?.();
   }
   function initWebRTC() {
     onSignal("peers", ({ peers }) => {
-      for (const p of peers) {
-        console.log("[GulpyVC] existing peer:", p.id, p.nick);
-        createPeer(p.id, true);
-      }
+      for (const p of peers)
+        createPeer(p.id, true, p.nick);
     });
     onSignal("peer-joined", ({ id, nick }) => {
-      console.log("[GulpyVC] peer joined VC:", id, nick);
-      createPeer(id, false);
+      createPeer(id, false, nick);
     });
-    onSignal("peer-left", ({ id }) => {
-      console.log("[GulpyVC] peer left VC:", id);
-      removePeer(id);
-    });
+    onSignal("peer-left", ({ id }) => removePeer(id));
     onSignal("offer", async ({ from, sdp }) => {
       const pc = createPeer(from, true);
       const offerCollision = sdp.type === "offer" && (pc._makingOffer || pc.signalingState !== "stable");
@@ -525,21 +577,19 @@
     });
     onSignal("answer", async ({ from, sdp }) => {
       const pc = _peers.get(from);
-      if (!pc)
-        return;
-      try {
-        await pc.setRemoteDescription(sdp);
-      } catch {
-      }
+      if (pc)
+        try {
+          await pc.setRemoteDescription(sdp);
+        } catch {
+        }
     });
     onSignal("ice", async ({ from, candidate }) => {
       const pc = _peers.get(from);
-      if (!pc)
-        return;
-      try {
-        await pc.addIceCandidate(candidate);
-      } catch {
-      }
+      if (pc)
+        try {
+          await pc.addIceCandidate(candidate);
+        } catch {
+        }
     });
   }
   function addMicToPeers() {
@@ -552,13 +602,162 @@
       }
     }
   }
-  var STUN, _peers;
+  var STUN, SPEAKING_THRESHOLD, SPEAKING_POLL_MS, _peers, _info, _localInfo, _audioCtx, _onChange;
   var init_webrtc = __esm({
     "src/webrtc.js"() {
       init_mic();
       init_signaling();
       STUN = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+      SPEAKING_THRESHOLD = 12;
+      SPEAKING_POLL_MS = 80;
       _peers = /* @__PURE__ */ new Map();
+      _info = /* @__PURE__ */ new Map();
+      _localInfo = null;
+      _audioCtx = null;
+      _onChange = null;
+    }
+  });
+
+  // src/panel.js
+  function renderList() {
+    if (!_list)
+      return;
+    const peers = getPeerList();
+    peers.sort((a, b) => (b.speaking ? 1 : 0) - (a.speaking ? 1 : 0));
+    _list.innerHTML = "";
+    for (const p of peers) {
+      const row = document.createElement("div");
+      row.className = "gulpyvc-peer" + (p.speaking ? " speaking" : "") + (p.local ? " local" : "");
+      const dot = document.createElement("div");
+      dot.className = "gulpyvc-dot";
+      const nick = document.createElement("span");
+      nick.className = "gulpyvc-nick";
+      nick.textContent = p.nick;
+      row.appendChild(dot);
+      row.appendChild(nick);
+      if (p.local) {
+        const you = document.createElement("span");
+        you.className = "gulpyvc-you";
+        you.textContent = "(you)";
+        row.appendChild(you);
+      }
+      _list.appendChild(row);
+    }
+    if (_label) {
+      const count = peers.length;
+      _label.textContent = `VC (${count})`;
+    }
+  }
+  function initPanel() {
+    const style = document.createElement("style");
+    style.textContent = CSS2;
+    document.head.appendChild(style);
+    _panel = document.createElement("div");
+    _panel.id = "gulpyvc-panel";
+    const header = document.createElement("div");
+    header.id = "gulpyvc-panel-header";
+    _arrow = document.createElement("span");
+    _arrow.id = "gulpyvc-panel-arrow";
+    _arrow.textContent = "\u25B6";
+    _arrow.classList.add("open");
+    _label = document.createElement("span");
+    _label.textContent = "VC (0)";
+    header.appendChild(_arrow);
+    header.appendChild(_label);
+    _list = document.createElement("div");
+    _list.id = "gulpyvc-panel-list";
+    header.addEventListener("click", () => {
+      _collapsed = !_collapsed;
+      _list.style.display = _collapsed ? "none" : "flex";
+      _arrow.classList.toggle("open", !_collapsed);
+    });
+    _panel.appendChild(header);
+    _panel.appendChild(_list);
+    document.body.appendChild(_panel);
+    onPeerListChange(renderList);
+    renderList();
+  }
+  var FONT, CSS2, _panel, _list, _arrow, _label, _collapsed;
+  var init_panel = __esm({
+    "src/panel.js"() {
+      init_webrtc();
+      FONT = "'Comic Neue', comicsansms, sans-serif";
+      CSS2 = `
+#gulpyvc-panel {
+  position: fixed;
+  top: 48px;
+  left: 8px;
+  z-index: 9999;
+  font-family: ${FONT};
+  font-size: 13px;
+  color: #d0e8ff;
+  min-width: 140px;
+  max-width: 200px;
+  pointer-events: auto;
+  user-select: none;
+}
+#gulpyvc-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: rgba(0,0,0,0.45);
+  transition: background 0.15s;
+}
+#gulpyvc-panel-header:hover { background: rgba(0,0,0,0.65); }
+#gulpyvc-panel-arrow {
+  font-size: 10px;
+  transition: transform 0.15s;
+  display: inline-block;
+}
+#gulpyvc-panel-arrow.open { transform: rotate(90deg); }
+#gulpyvc-panel-list {
+  margin-top: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.gulpyvc-peer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: rgba(0,0,0,0.38);
+  transition: background 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gulpyvc-peer.speaking {
+  background: rgba(76,175,80,0.22);
+  color: #afffb2;
+  text-shadow: 0 0 6px rgba(100,255,110,0.5);
+}
+.gulpyvc-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #555;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.gulpyvc-peer.speaking .gulpyvc-dot {
+  background: #66ff6e;
+  box-shadow: 0 0 5px #66ff6e;
+}
+.gulpyvc-peer.local .gulpyvc-dot { background: #90caf9; }
+.gulpyvc-peer.local.speaking .gulpyvc-dot { background: #66ff6e; box-shadow: 0 0 5px #66ff6e; }
+.gulpyvc-nick { overflow: hidden; text-overflow: ellipsis; }
+.gulpyvc-you { font-size: 10px; opacity: 0.55; margin-left: 2px; }
+`;
+      _panel = null;
+      _list = null;
+      _arrow = null;
+      _label = null;
+      _collapsed = false;
     }
   });
 
@@ -572,10 +771,10 @@
       init_mic();
       init_signaling();
       init_webrtc();
+      init_panel();
+      init_state();
       var win3 = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
       var _micReady = false;
-      var _localId = null;
-      var _localNick = null;
       var _connected = false;
       async function onMicChange(active) {
         if (active && !_micReady) {
@@ -583,22 +782,27 @@
             await requestMic();
             _micReady = true;
             addMicToPeers();
+            startLocalAnalyser();
           } catch (e) {
             console.warn("[GulpyVC] mic permission denied:", e.message);
+            state.mic = false;
             setKeyState("mic", false);
             return;
           }
         }
+        state.mic = active;
         setMicActive(active);
         setKeyState("mic", active);
         if (active && !_connected && getSessionKey()) {
           _connected = true;
-          const me = getSessionPlayers().find((p) => p.id === _localId) || getSessionPlayers()[0];
-          _localNick = me?.nick || "Player";
-          connectSignaling(getSessionKey(), _localId || "unknown", _localNick);
+          const me = getSessionPlayers()[0];
+          const nick = me?.nick || "Player";
+          setLocalPeer(nick);
+          connectSignaling(getSessionKey(), me?.id ?? "unknown", nick);
         }
       }
       function onAudioChange(active) {
+        state.audio = active;
         setKeyState("audio", active);
       }
       (function() {
@@ -610,6 +814,7 @@
           try {
             initWebRTC();
             initGUI();
+            initPanel();
             setCallback("mic", onMicChange);
             setCallback("audio", onAudioChange);
             initKeys(onMicChange, onAudioChange);
