@@ -7,6 +7,7 @@
 // @match        *://gulper.io/*
 // @updateURL    https://raw.githubusercontent.com/imuarte/gulpyvc/master/dist/gulpyvc.user.js
 // @downloadURL  https://raw.githubusercontent.com/imuarte/gulpyvc/master/dist/gulpyvc.user.js
+// @license      MIT
 // @grant        none
 // ==/UserScript==
 (() => {
